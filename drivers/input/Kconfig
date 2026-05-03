@@ -341,6 +341,50 @@ config INPUT_IQS9151_3F_TAPDRAG_GAP_MAX_MS
       Maximum time to keep BTN2 pressed after a 3F tap while waiting
       for a second 3F touch (driver-side).
 
+config INPUT_IQS9151_DRAG_LOCK_ENABLE
+    bool "IQS9151 drag lock enable"
+    default n
+    depends on INPUT_IQS9151_1F_PRESSHOLD_ENABLE || \
+               INPUT_IQS9151_2F_PRESSHOLD_ENABLE || \
+               INPUT_IQS9151_3F_PRESSHOLD_ENABLE
+    help
+      Enable macOS-style drag lock for TapDrag gestures.
+      When a TapDrag (tap -> tap-and-hold -> drag) lift occurs, the
+      currently held button (BTN_0 for 1F, BTN_1 for 2F, BTN_2 for 3F)
+      is kept pressed instead of being released. The lock is released
+      by a subsequent 1F single tap. Defaults to n to preserve existing
+      behavior.
+
+config INPUT_IQS9151_DRAG_LOCK_RELEASE_TAP_MAX_MS
+    int "IQS9151 drag lock release-tap max time (ms)"
+    range 1 1000
+    default 250
+    depends on INPUT_IQS9151_DRAG_LOCK_ENABLE
+    help
+      Maximum down duration for the 1F single-tap that releases an
+      active drag lock.
+
+config INPUT_IQS9151_DRAG_LOCK_RELEASE_TAP_MOVE
+    int "IQS9151 drag lock release-tap move threshold"
+    range 1 1000
+    default 50
+    depends on INPUT_IQS9151_DRAG_LOCK_ENABLE
+    help
+      Maximum accumulated movement for the release-tap detection.
+
+config INPUT_IQS9151_DRAG_LOCK_RELEASE_TAP_CLICK_ENABLE
+    bool "IQS9151 drag lock release-tap emits a click (1F only)"
+    default n
+    depends on INPUT_IQS9151_DRAG_LOCK_ENABLE
+    help
+      When enabled, releasing a 1F drag lock with a tap also emits a
+      BTN_0 click at the tap location ("drop here" semantics, similar
+      to macOS trackpad). Disable to keep the release silent: useful
+      when a click would deselect a multi-selection just released
+      from drag, or when the user performs subsequent grab gestures
+      that should not fire stray clicks. 2F/3F drag-lock releases are
+      always silent regardless of this option.
+
 config INPUT_IQS9151_3F_SWIPE_THRESHOLD
     int "IQS9151 three-finger swipe threshold"
     range 0 1000

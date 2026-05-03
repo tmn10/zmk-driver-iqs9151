@@ -232,6 +232,11 @@ struct iqs9151_data {
     struct iqs9151_finger_history_entry finger_history[IQS9151_FINGER_HISTORY_SIZE];
     uint8_t finger_history_head;
     uint8_t finger_history_count;
+#if IS_ENABLED(CONFIG_INPUT_IQS9151_DRAG_LOCK_ENABLE)
+    uint16_t drag_lock_button;
+    /* TODO: reserved for a future timeout-based auto-release feature. */
+    int64_t drag_lock_started_ms;
+#endif
 };
 
 #ifdef CONFIG_INPUT_IQS9151_TEST
@@ -855,6 +860,57 @@ static void iqs9151_release_hold(struct iqs9151_data *data, const struct device 
     data->hold_button = 0U;
 }
 
+#if IS_ENABLED(CONFIG_INPUT_IQS9151_DRAG_LOCK_ENABLE)
+static void iqs9151_drag_lock_arm(struct iqs9151_data *data) {
+    if (data->hold_button == 0U) {
+        return;
+    }
+    data->drag_lock_button = data->hold_button;
+    data->drag_lock_started_ms = k_uptime_get();
+    data->hold_button = 0U;
+    LOG_DBG("drag_lock: armed btn=0x%04x", data->drag_lock_button);
+}
+
+static void iqs9151_drag_lock_release(struct iqs9151_data *data,
+                                      const struct device *dev) {
+    if (data->drag_lock_button == 0U) {
+        return;
+    }
+    iqs9151_report_key_event(dev, data->drag_lock_button, false, true, K_NO_WAIT);
+    LOG_DBG("drag_lock: released btn=0x%04x", data->drag_lock_button);
+    data->drag_lock_button = 0U;
+    data->drag_lock_started_ms = 0;
+}
+
+static void iqs9151_drag_lock_release_with_click(struct iqs9151_data *data,
+                                                 const struct device *dev) {
+    const uint16_t btn = data->drag_lock_button;
+    if (btn == 0U) {
+        return;
+    }
+    iqs9151_report_key_event(dev, btn, false, true, K_FOREVER);
+    data->drag_lock_button = 0U;
+    data->drag_lock_started_ms = 0;
+#if IS_ENABLED(CONFIG_INPUT_IQS9151_DRAG_LOCK_RELEASE_TAP_CLICK_ENABLE)
+    /* Only emit a click for left-button locks (1F TapDrag).
+     * Releasing a right/middle button lock with a click would fire an
+     * unintended context menu / middle-click after the drag, which is
+     * almost never the user's intent. */
+    if (btn == INPUT_BTN_0) {
+        iqs9151_report_key_event(dev, btn, true, true, K_FOREVER);
+        iqs9151_report_key_event(dev, btn, false, true, K_FOREVER);
+        LOG_DBG("drag_lock: released+clicked btn=0x%04x", btn);
+        return;
+    }
+#endif
+    LOG_DBG("drag_lock: released (no click) btn=0x%04x", btn);
+}
+#else
+#define iqs9151_drag_lock_arm(data) ((void)0)
+#define iqs9151_drag_lock_release(data, dev) ((void)0)
+#define iqs9151_drag_lock_release_with_click(data, dev) ((void)0)
+#endif
+
 static void iqs9151_clear_one_finger_click_pending(struct iqs9151_data *data) {
     data->one_finger_click_pending = false;
     data->one_finger_click_pending_ms = 0;
@@ -943,6 +999,11 @@ static bool iqs9151_emit_click(struct iqs9151_data *data,
 static bool iqs9151_emit_hold_press(struct iqs9151_data *data,
                                     const struct device *dev,
                                     uint16_t button) {
+#if IS_ENABLED(CONFIG_INPUT_IQS9151_DRAG_LOCK_ENABLE)
+    if (data->drag_lock_button != 0U) {
+        iqs9151_drag_lock_release(data, dev);
+    }
+#endif
     if (!iqs9151_try_tap_hold_emit(data, dev)) {
         return false;
     }
@@ -1120,7 +1181,15 @@ static bool iqs9151_one_finger_update(struct iqs9151_data *data,
 
         released_from_hold = state->hold_sent;
         if (state->hold_sent) {
+#if IS_ENABLED(CONFIG_INPUT_IQS9151_DRAG_LOCK_ENABLE)
+            if (second_tap_detected) {
+                iqs9151_release_hold(data, dev);
+            } else {
+                iqs9151_drag_lock_arm(data);
+            }
+#else
             iqs9151_release_hold(data, dev);
+#endif
         }
         if (second_tap_detected &&
             IS_ENABLED(CONFIG_INPUT_IQS9151_1F_TAP_ENABLE)) {
@@ -1129,6 +1198,22 @@ static bool iqs9151_one_finger_update(struct iqs9151_data *data,
         iqs9151_one_finger_reset(state);
         return released_from_hold;
     }
+
+#if IS_ENABLED(CONFIG_INPUT_IQS9151_DRAG_LOCK_ENABLE)
+    if (data->drag_lock_button != 0U &&
+        frame->finger_count == 0U && state->tap_candidate) {
+        const int64_t elapsed_ms = now_ms - state->down_ms;
+        if (elapsed_ms <= CONFIG_INPUT_IQS9151_DRAG_LOCK_RELEASE_TAP_MAX_MS &&
+            iqs9151_abs32(state->dx) <= CONFIG_INPUT_IQS9151_DRAG_LOCK_RELEASE_TAP_MOVE &&
+            iqs9151_abs32(state->dy) <= CONFIG_INPUT_IQS9151_DRAG_LOCK_RELEASE_TAP_MOVE) {
+            iqs9151_drag_lock_release_with_click(data, dev);
+            iqs9151_one_finger_reset(state);
+            /* Treat as hold-release equivalent so cursor inertia gating
+             * suppresses any residual motion of the release tap itself. */
+            return true;
+        }
+    }
+#endif
 
     if (frame->finger_count == 0U && state->tap_candidate) {
         const int64_t elapsed_ms = now_ms - state->down_ms;
@@ -1344,7 +1429,15 @@ static void iqs9151_two_finger_update(struct iqs9151_data *data,
         }
 
         if (state->hold_sent) {
+#if IS_ENABLED(CONFIG_INPUT_IQS9151_DRAG_LOCK_ENABLE)
+            if (second_tap_detected) {
+                iqs9151_release_hold(data, dev);
+            } else {
+                iqs9151_drag_lock_arm(data);
+            }
+#else
             iqs9151_release_hold(data, dev);
+#endif
         }
         if (second_tap_detected &&
             IS_ENABLED(CONFIG_INPUT_IQS9151_2F_TAP_ENABLE)) {
@@ -1589,7 +1682,15 @@ static bool iqs9151_three_finger_update(struct iqs9151_data *data,
         }
 
         if (data->three_hold_sent) {
+#if IS_ENABLED(CONFIG_INPUT_IQS9151_DRAG_LOCK_ENABLE)
+            if (second_tap_detected) {
+                iqs9151_release_hold(data, dev);
+            } else {
+                iqs9151_drag_lock_arm(data);
+            }
+#else
             iqs9151_release_hold(data, dev);
+#endif
         }
         if (second_tap_detected &&
             IS_ENABLED(CONFIG_INPUT_IQS9151_3F_TAP_ENABLE)) {
@@ -1694,6 +1795,9 @@ static void iqs9151_reset_gesture_states(struct iqs9151_data *data,
     }
     if (release_hold) {
         iqs9151_release_hold(data, dev);
+#if IS_ENABLED(CONFIG_INPUT_IQS9151_DRAG_LOCK_ENABLE)
+        iqs9151_drag_lock_release(data, dev);
+#endif
     }
 
     iqs9151_one_finger_reset(&data->one_finger);
@@ -2657,6 +2761,10 @@ static int iqs9151_init(const struct device *dev) {
     data->three_finger_two_lead_valid = false;
     iqs9151_three_finger_reset(data);
     data->hold_button = 0U;
+#if IS_ENABLED(CONFIG_INPUT_IQS9151_DRAG_LOCK_ENABLE)
+    data->drag_lock_button = 0U;
+    data->drag_lock_started_ms = 0;
+#endif
     iqs9151_reset_finger_history(data);
     gpio_init_callback(&data->gpio_cb, iqs9151_gpio_cb,
                         BIT(cfg->irq_gpio.pin));
@@ -2715,6 +2823,10 @@ void iqs9151_test_context_init(void *ctx, const struct device *dev) {
     data->three_finger_two_lead_valid = false;
     iqs9151_three_finger_reset(data);
     data->hold_button = 0U;
+#if IS_ENABLED(CONFIG_INPUT_IQS9151_DRAG_LOCK_ENABLE)
+    data->drag_lock_button = 0U;
+    data->drag_lock_started_ms = 0;
+#endif
     iqs9151_reset_finger_history(data);
 }
 
