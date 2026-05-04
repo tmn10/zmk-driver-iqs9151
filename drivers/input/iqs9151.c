@@ -214,6 +214,12 @@ struct iqs9151_data {
     bool three_finger_one_lead_valid;
     bool three_finger_two_lead_valid;
     struct iqs9151_frame prev_frame;
+#if IS_ENABLED(CONFIG_INPUT_IQS9151_FINGER_COUNT_DEBOUNCE_ENABLE)
+    uint8_t fc_stable;
+    uint8_t fc_pending;
+    uint8_t fc_pending_frames;
+    bool    fc_initialized;
+#endif
     bool three_active;
     bool three_hold_sent;
     bool three_swipe_sent;
@@ -695,6 +701,66 @@ static void iqs9151_update_prev_frame(struct iqs9151_data *data,
         data->prev_frame.finger2_x = prev_frame->finger2_x;
         data->prev_frame.finger2_y = prev_frame->finger2_y;
     }
+}
+
+static void iqs9151_debounce_finger_count(struct iqs9151_data *data,
+                                          struct iqs9151_frame *frame) {
+#if IS_ENABLED(CONFIG_INPUT_IQS9151_FINGER_COUNT_DEBOUNCE_ENABLE)
+    /* Scoped debounce: only filter UPWARD transitions during an active
+     * multi-finger session (stable >= 1 and raw > stable). The IC is
+     * event-driven (DRDY interrupt), so a fast tap may only report 2
+     * frames (touchdown + lift). A frame-count debounce on 0<->1
+     * transitions destroys taps. We narrow the filter to the specific
+     * failure mode: transient flickers that escalate the gesture state
+     * (1F -> 2F/3F flickers breaking TapDrag into scroll, 2F -> 3F
+     * flickers misfiring 2F long-press as 3F middle-click hold, etc.).
+     * Downward transitions (lifts, partial lifts) and 0 -> N initial
+     * touchdowns pass through immediately. */
+    const uint8_t threshold = (uint8_t)CONFIG_INPUT_IQS9151_FINGER_COUNT_DEBOUNCE_FRAMES;
+    const uint8_t raw = frame->finger_count;
+
+    if (!data->fc_initialized) {
+        data->fc_stable = raw;
+        data->fc_pending = raw;
+        data->fc_pending_frames = 0;
+        data->fc_initialized = true;
+        return;
+    }
+
+    if (data->fc_stable >= 1U && raw > data->fc_stable) {
+        if (raw == data->fc_pending) {
+            data->fc_pending_frames++;
+            if (data->fc_pending_frames >= threshold) {
+                data->fc_stable = raw;
+                data->fc_pending_frames = 0;
+                return;
+            }
+            frame->finger_count = data->fc_stable;
+            return;
+        }
+        data->fc_pending = raw;
+        data->fc_pending_frames = 1;
+        if (threshold > 1U) {
+            frame->finger_count = data->fc_stable;
+            return;
+        }
+        data->fc_stable = raw;
+        data->fc_pending_frames = 0;
+        return;
+    }
+
+    /* All other transitions (downward, or 0->N initial touchdown): commit
+     * immediately. Upward transitions during an active multi-finger session
+     * (1->2, 1->3, 2->3, etc.) are debounced above to suppress IC flickers
+     * that would otherwise escalate gesture state (e.g. 2F long-press hold
+     * misfiring as 3F middle-click hold). */
+    data->fc_stable = raw;
+    data->fc_pending = raw;
+    data->fc_pending_frames = 0;
+#else
+    ARG_UNUSED(data);
+    ARG_UNUSED(frame);
+#endif
 }
 
 static int32_t iqs9151_abs32(int32_t value) {
@@ -2061,6 +2127,12 @@ static bool iqs9151_handle_show_reset(struct iqs9151_data *data,
     iqs9151_motion_history_reset(&data->scroll_motion_history);
     iqs9151_motion_history_reset(&data->cursor_motion_history);
     memset(&data->prev_frame, 0, sizeof(data->prev_frame));
+#if IS_ENABLED(CONFIG_INPUT_IQS9151_FINGER_COUNT_DEBOUNCE_ENABLE)
+    data->fc_stable = 0;
+    data->fc_pending = 0;
+    data->fc_pending_frames = 0;
+    data->fc_initialized = false;
+#endif
     return true;
 }
 
@@ -2318,6 +2390,15 @@ static void iqs9151_process_frame(struct iqs9151_data *data,
                                   const struct iqs9151_frame *frame,
                                   int64_t now_ms) {
     const struct device *dev = data->dev;
+    struct iqs9151_frame local_frame = *frame;
+
+    if (iqs9151_handle_show_reset(data, &local_frame)) {
+        return;
+    }
+
+    iqs9151_debounce_finger_count(data, &local_frame);
+
+    frame = &local_frame; /* shadow the const parameter for the rest of the function */
     const struct iqs9151_frame prev_frame = data->prev_frame;
     struct iqs9151_two_finger_result two_result;
     const bool cursor_moving =
@@ -2326,10 +2407,6 @@ static void iqs9151_process_frame(struct iqs9151_data *data,
     bool suppress_cursor_tail;
 
     iqs9151_two_finger_result_reset(&two_result);
-
-    if (iqs9151_handle_show_reset(data, frame)) {
-        return;
-    }
 
     released_from_hold =
         iqs9151_update_gesture_sessions(data, frame, &prev_frame, &two_result);

@@ -392,6 +392,27 @@ config INPUT_IQS9151_3F_SWIPE_THRESHOLD
     help
       Three-finger swipe threshold (driver-side).
 
+config INPUT_IQS9151_FINGER_COUNT_DEBOUNCE_ENABLE
+    bool "IQS9151 finger_count debounce enable"
+    default n
+    help
+      Filter single-frame flickers in the IC-reported finger_count
+      before they reach the gesture state machines. Prevents transient
+      1->2->1 or 1->3->1 jitters from spuriously triggering 2F/3F taps
+      or breaking 1F TapDrag into 2F scroll. Real, sustained changes
+      are propagated with at most DEBOUNCE_FRAMES-1 frames of latency.
+
+config INPUT_IQS9151_FINGER_COUNT_DEBOUNCE_FRAMES
+    int "IQS9151 finger_count debounce confirmation frames"
+    range 1 5
+    default 2
+    depends on INPUT_IQS9151_FINGER_COUNT_DEBOUNCE_ENABLE
+    help
+      Number of consecutive frames a new finger_count must be observed
+      before it is committed. 1 is effectively a passthrough, 2 filters
+      isolated single-frame flickers, 3+ adds more latency for stricter
+      filtering. Each polling cycle is one frame.
+
 config INPUT_IQS9151_TEST
     bool "IQS9151 test hooks"
     depends on ZTEST
