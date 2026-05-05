@@ -75,6 +75,13 @@ LOG_MODULE_REGISTER(iqs9151, CONFIG_INPUT_IQS9151_LOG_LEVEL);
 #define THREE_FINGER_TAP_MAX_MS CONFIG_INPUT_IQS9151_3F_TAP_MAX_MS
 #define THREE_FINGER_TAP_MOVE CONFIG_INPUT_IQS9151_3F_TAP_MOVE
 #define ONE_FINGER_TAP_MOVE CONFIG_INPUT_IQS9151_1F_TAP_MOVE
+#if IS_ENABLED(CONFIG_INPUT_IQS9151_LONG_PRESS_HOLD_ENABLE)
+#define LONG_PRESS_HOLD_MS   CONFIG_INPUT_IQS9151_LONG_PRESS_HOLD_MS
+#define LONG_PRESS_HOLD_MOVE CONFIG_INPUT_IQS9151_LONG_PRESS_HOLD_MOVE
+#else
+#define LONG_PRESS_HOLD_MS   0
+#define LONG_PRESS_HOLD_MOVE 0
+#endif
 #define TWO_FINGER_TAP_MOVE CONFIG_INPUT_IQS9151_2F_TAP_MOVE
 #define TWO_FINGER_SCROLL_START_MOVE CONFIG_INPUT_IQS9151_2F_SCROLL_START_MOVE
 #define TWO_FINGER_PINCH_START_DISTANCE CONFIG_INPUT_IQS9151_2F_PINCH_START_DISTANCE
@@ -1233,6 +1240,21 @@ static bool iqs9151_one_finger_update(struct iqs9151_data *data,
              iqs9151_abs32(state->dy) > ONE_FINGER_TAP_MOVE)) {
             state->hold_candidate = false;
         }
+#if IS_ENABLED(CONFIG_INPUT_IQS9151_LONG_PRESS_HOLD_ENABLE)
+        if (!state->hold_sent && !state->tapdrag_second_touch &&
+            elapsed_ms >= LONG_PRESS_HOLD_MS &&
+            iqs9151_abs32(state->dx) <= LONG_PRESS_HOLD_MOVE &&
+            iqs9151_abs32(state->dy) <= LONG_PRESS_HOLD_MOVE
+#if IS_ENABLED(CONFIG_INPUT_IQS9151_DRAG_LOCK_ENABLE)
+            && data->drag_lock_button == 0U
+#endif
+            ) {
+            if (iqs9151_emit_hold_press(data, dev, INPUT_BTN_0)) {
+                state->hold_sent = true;
+                state->tap_candidate = false;
+            }
+        }
+#endif
         return false;
     }
 
@@ -1264,6 +1286,20 @@ static bool iqs9151_one_finger_update(struct iqs9151_data *data,
         iqs9151_one_finger_reset(state);
         return released_from_hold;
     }
+
+#if IS_ENABLED(CONFIG_INPUT_IQS9151_LONG_PRESS_HOLD_ENABLE)
+    if (frame->finger_count == 0U && state->hold_sent &&
+        !state->tapdrag_second_touch) {
+#if IS_ENABLED(CONFIG_INPUT_IQS9151_DRAG_LOCK_ENABLE)
+        iqs9151_drag_lock_arm(data);
+#else
+        iqs9151_release_hold(data, dev);
+#endif
+        released_from_hold = true;
+        iqs9151_one_finger_reset(state);
+        return released_from_hold;
+    }
+#endif
 
 #if IS_ENABLED(CONFIG_INPUT_IQS9151_DRAG_LOCK_ENABLE)
     if (data->drag_lock_button != 0U &&
@@ -1356,6 +1392,12 @@ static void iqs9151_two_finger_update(struct iqs9151_data *data,
         state->active = true;
         state->hold_sent = tapdrag_second_touch;
         state->tap_candidate = !tapdrag_second_touch &&
+#if IS_ENABLED(CONFIG_INPUT_IQS9151_DRAG_LOCK_ENABLE)
+            /* See the matching guard in three_finger_update: suppress tap
+             * candidacy when re-entering during an active 2F drag-lock to
+             * avoid flicker-driven repeat clicks on BTN_1. */
+            data->drag_lock_button != INPUT_BTN_1 &&
+#endif
             ((prev_frame->finger_count == 0U) ||
              iqs9151_has_recent_finger_count(data, 0U, now_ms, IQS9151_TAP_REENTRY_WINDOW_MS) ||
              one_lead_tap_candidate);
@@ -1429,7 +1471,25 @@ static void iqs9151_two_finger_update(struct iqs9151_data *data,
             return;
         }
 
-        if (state->mode == IQS9151_2F_MODE_NONE) {
+#if IS_ENABLED(CONFIG_INPUT_IQS9151_LONG_PRESS_HOLD_ENABLE)
+        if (!state->hold_sent && !state->tapdrag_second_touch &&
+            state->mode == IQS9151_2F_MODE_NONE &&
+            elapsed_ms >= LONG_PRESS_HOLD_MS &&
+            iqs9151_abs32(state->centroid_dx) <= LONG_PRESS_HOLD_MOVE &&
+            iqs9151_abs32(state->centroid_dy) <= LONG_PRESS_HOLD_MOVE &&
+            iqs9151_abs32(state->distance_delta) <= LONG_PRESS_HOLD_MOVE
+#if IS_ENABLED(CONFIG_INPUT_IQS9151_DRAG_LOCK_ENABLE)
+            && data->drag_lock_button == 0U
+#endif
+            ) {
+            if (iqs9151_emit_hold_press(data, dev, INPUT_BTN_1)) {
+                state->hold_sent = true;
+                state->tap_candidate = false;
+            }
+        }
+#endif
+
+        if (state->mode == IQS9151_2F_MODE_NONE && !state->hold_sent) {
             const int32_t abs_center =
                 MAX(iqs9151_abs32(state->centroid_dx), iqs9151_abs32(state->centroid_dy));
             const int32_t abs_dist = iqs9151_abs32(state->distance_delta);
@@ -1513,6 +1573,18 @@ static void iqs9151_two_finger_update(struct iqs9151_data *data,
         iqs9151_two_finger_reset(state);
         return;
     }
+
+#if IS_ENABLED(CONFIG_INPUT_IQS9151_LONG_PRESS_HOLD_ENABLE)
+    if (state->hold_sent && !state->tapdrag_second_touch) {
+#if IS_ENABLED(CONFIG_INPUT_IQS9151_DRAG_LOCK_ENABLE)
+        iqs9151_drag_lock_arm(data);
+#else
+        iqs9151_release_hold(data, dev);
+#endif
+        iqs9151_two_finger_reset(state);
+        return;
+    }
+#endif
 
     if (state->release_pending) {
         const int64_t pending_ms = now_ms - state->release_pending_ms;
@@ -1644,6 +1716,14 @@ static bool iqs9151_three_finger_update(struct iqs9151_data *data,
         data->three_hold_sent = tapdrag_second_touch;
         data->three_swipe_sent = false;
         data->three_tap_candidate = !tapdrag_second_touch &&
+#if IS_ENABLED(CONFIG_INPUT_IQS9151_DRAG_LOCK_ENABLE)
+            /* Suppress tap candidacy when re-entering during an active 3F
+             * drag-lock. Without this, IC flickers (3F -> 0F -> 3F within
+             * 200ms during a stationary hold) repeatedly fire BTN_2 clicks
+             * on lift, which the HID layer interprets as up events that
+             * silently break the drag-lock and cascade into rapid clicks. */
+            data->drag_lock_button != INPUT_BTN_2 &&
+#endif
             ((prev_frame->finger_count == 0U) ||
              iqs9151_has_recent_finger_count(data, 0U, now_ms,
                                              IQS9151_TAP_REENTRY_WINDOW_MS) ||
@@ -1713,6 +1793,23 @@ static bool iqs9151_three_finger_update(struct iqs9151_data *data,
             return true;
         }
 
+#if IS_ENABLED(CONFIG_INPUT_IQS9151_LONG_PRESS_HOLD_ENABLE)
+        if (!data->three_hold_sent && !data->three_tapdrag_second_touch &&
+            !data->three_swipe_sent &&
+            elapsed >= LONG_PRESS_HOLD_MS &&
+            iqs9151_abs32(data->three_dx) <= LONG_PRESS_HOLD_MOVE &&
+            iqs9151_abs32(data->three_dy) <= LONG_PRESS_HOLD_MOVE
+#if IS_ENABLED(CONFIG_INPUT_IQS9151_DRAG_LOCK_ENABLE)
+            && data->drag_lock_button == 0U
+#endif
+            ) {
+            if (iqs9151_emit_hold_press(data, dev, INPUT_BTN_2)) {
+                data->three_hold_sent = true;
+                data->three_tap_candidate = false;
+            }
+        }
+#endif
+
         if (!data->three_swipe_sent && !data->three_hold_sent) {
             if (iqs9151_abs32(data->three_dx) >= CONFIG_INPUT_IQS9151_3F_SWIPE_THRESHOLD &&
                 iqs9151_abs32(data->three_dx) >= iqs9151_abs32(data->three_dy)) {
@@ -1766,6 +1863,18 @@ static bool iqs9151_three_finger_update(struct iqs9151_data *data,
         iqs9151_three_finger_reset(data);
         return true;
     }
+
+#if IS_ENABLED(CONFIG_INPUT_IQS9151_LONG_PRESS_HOLD_ENABLE)
+    if (data->three_hold_sent && !data->three_tapdrag_second_touch) {
+#if IS_ENABLED(CONFIG_INPUT_IQS9151_DRAG_LOCK_ENABLE)
+        iqs9151_drag_lock_arm(data);
+#else
+        iqs9151_release_hold(data, dev);
+#endif
+        iqs9151_three_finger_reset(data);
+        return true;
+    }
+#endif
 
     if (data->three_release_pending) {
         const int64_t pending_ms = now_ms - data->three_release_pending_ms;

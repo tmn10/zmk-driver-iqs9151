@@ -139,6 +139,39 @@ config INPUT_IQS9151_1F_TAPDRAG_GAP_MAX_MS
       Maximum time to keep BTN0 pressed after a 1F tap while waiting
       for a second touch (driver-side).
 
+config INPUT_IQS9151_LONG_PRESS_HOLD_ENABLE
+    bool "IQS9151 long-press hold engagement (1F/2F/3F)"
+    default n
+    help
+      Engage button hold automatically when N fingers remain in contact
+      past LONG_PRESS_HOLD_MS without exceeding LONG_PRESS_HOLD_MOVE
+      cumulative movement. 1F engages BTN_0, 2F engages BTN_1, 3F engages
+      BTN_2. The held button is released cleanly when the gesture ends
+      (any non-N-finger frame). For wide-area drag with persistence, use
+      the existing TapDrag pattern instead. Independent of TapDrag /
+      PressHold; both can coexist.
+
+config INPUT_IQS9151_LONG_PRESS_HOLD_MS
+    int "IQS9151 long-press hold engagement time (ms)"
+    range 100 2000
+    default 500
+    depends on INPUT_IQS9151_LONG_PRESS_HOLD_ENABLE
+    help
+      Time the fingers must remain in contact (with cumulative motion
+      below LONG_PRESS_HOLD_MOVE) before the corresponding button is
+      engaged. Applies uniformly to 1F, 2F, and 3F sessions.
+
+config INPUT_IQS9151_LONG_PRESS_HOLD_MOVE
+    int "IQS9151 long-press hold movement tolerance"
+    range 0 500
+    default 100
+    depends on INPUT_IQS9151_LONG_PRESS_HOLD_ENABLE
+    help
+      Maximum cumulative movement (in IC units) tolerated during the
+      hold-engagement window. Exceeding this disqualifies the touch
+      from long-press hold; the finger(s) continue as a normal cursor
+      move / scroll / pinch / swipe until lift.
+
 config INPUT_IQS9151_CURSOR_INERTIA_ENABLE
     bool "IQS9151 cursor inertia enable"
     default y
