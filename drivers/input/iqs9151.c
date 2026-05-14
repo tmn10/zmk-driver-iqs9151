@@ -16,6 +16,10 @@
 #include "iqs9151_regs.h"
 #include "iqs9151_test.h"
 
+#if IS_ENABLED(CONFIG_INPUT_IQS9151_HAPTIC_FEEDBACK_ENABLE)
+#include <zmk/drivers/haptic/drv2605.h>
+#endif
+
 #include <stdbool.h>
 #include <stdint.h>
 #include <string.h>
@@ -92,6 +96,9 @@ LOG_MODULE_REGISTER(iqs9151, CONFIG_INPUT_IQS9151_LOG_LEVEL);
 struct iqs9151_config {
     struct i2c_dt_spec i2c;
     struct gpio_dt_spec irq_gpio;
+#if IS_ENABLED(CONFIG_INPUT_IQS9151_HAPTIC_FEEDBACK_ENABLE)
+    const struct device *haptic_dev;
+#endif
 };
 struct iqs9151_frame {
     int16_t rel_x;
@@ -257,6 +264,47 @@ static struct {
     iqs9151_test_event_hook_t hook;
     void *user_data;
 } iqs9151_test_hook;
+#endif
+
+#if IS_ENABLED(CONFIG_INPUT_IQS9151_HAPTIC_FEEDBACK_ENABLE)
+enum iqs9151_haptic_event {
+    IQS9151_HAPTIC_TAP,
+    IQS9151_HAPTIC_LONG_PRESS,
+    IQS9151_HAPTIC_DRAG_LOCK_ARM,
+    IQS9151_HAPTIC_DRAG_LOCK_RELEASE,
+};
+
+static inline void iqs9151_haptic_fire(const struct device *dev,
+                                       enum iqs9151_haptic_event event) {
+    const struct iqs9151_config *cfg = dev->config;
+    uint8_t effect = 0;
+
+    if (cfg->haptic_dev == NULL) {
+        return;
+    }
+    switch (event) {
+    case IQS9151_HAPTIC_TAP:
+        effect = CONFIG_INPUT_IQS9151_HAPTIC_TAP_EFFECT;
+        break;
+    case IQS9151_HAPTIC_LONG_PRESS:
+        effect = CONFIG_INPUT_IQS9151_HAPTIC_LONG_PRESS_EFFECT;
+        break;
+    case IQS9151_HAPTIC_DRAG_LOCK_ARM:
+        effect = CONFIG_INPUT_IQS9151_HAPTIC_DRAG_LOCK_ARM_EFFECT;
+        break;
+    case IQS9151_HAPTIC_DRAG_LOCK_RELEASE:
+        effect = CONFIG_INPUT_IQS9151_HAPTIC_DRAG_LOCK_RELEASE_EFFECT;
+        break;
+    }
+    if (effect == 0) {
+        return;
+    }
+    (void)drv2605_play_effect(cfg->haptic_dev, effect);
+}
+
+#define IQS9151_HAPTIC(dev, event) iqs9151_haptic_fire((dev), (event))
+#else
+#define IQS9151_HAPTIC(dev, event) ((void)0)
 #endif
 
 static int iqs9151_report_key_event(const struct device *dev, uint16_t code,
@@ -934,7 +982,8 @@ static void iqs9151_release_hold(struct iqs9151_data *data, const struct device 
 }
 
 #if IS_ENABLED(CONFIG_INPUT_IQS9151_DRAG_LOCK_ENABLE)
-static void iqs9151_drag_lock_arm(struct iqs9151_data *data) {
+static void iqs9151_drag_lock_arm(struct iqs9151_data *data,
+                                  const struct device *dev) {
     if (data->hold_button == 0U) {
         return;
     }
@@ -942,6 +991,7 @@ static void iqs9151_drag_lock_arm(struct iqs9151_data *data) {
     data->drag_lock_started_ms = k_uptime_get();
     data->hold_button = 0U;
     LOG_DBG("drag_lock: armed btn=0x%04x", data->drag_lock_button);
+    IQS9151_HAPTIC(dev, IQS9151_HAPTIC_DRAG_LOCK_ARM);
 }
 
 static void iqs9151_drag_lock_release(struct iqs9151_data *data,
@@ -953,6 +1003,7 @@ static void iqs9151_drag_lock_release(struct iqs9151_data *data,
     LOG_DBG("drag_lock: released btn=0x%04x", data->drag_lock_button);
     data->drag_lock_button = 0U;
     data->drag_lock_started_ms = 0;
+    IQS9151_HAPTIC(dev, IQS9151_HAPTIC_DRAG_LOCK_RELEASE);
 }
 
 static void iqs9151_drag_lock_release_with_click(struct iqs9151_data *data,
@@ -964,6 +1015,7 @@ static void iqs9151_drag_lock_release_with_click(struct iqs9151_data *data,
     iqs9151_report_key_event(dev, btn, false, true, K_FOREVER);
     data->drag_lock_button = 0U;
     data->drag_lock_started_ms = 0;
+    IQS9151_HAPTIC(dev, IQS9151_HAPTIC_DRAG_LOCK_RELEASE);
 #if IS_ENABLED(CONFIG_INPUT_IQS9151_DRAG_LOCK_RELEASE_TAP_CLICK_ENABLE)
     /* Only emit a click for left-button locks (1F TapDrag).
      * Releasing a right/middle button lock with a click would fire an
@@ -979,7 +1031,7 @@ static void iqs9151_drag_lock_release_with_click(struct iqs9151_data *data,
     LOG_DBG("drag_lock: released (no click) btn=0x%04x", btn);
 }
 #else
-#define iqs9151_drag_lock_arm(data) ((void)0)
+#define iqs9151_drag_lock_arm(data, dev) ((void)0)
 #define iqs9151_drag_lock_release(data, dev) ((void)0)
 #define iqs9151_drag_lock_release_with_click(data, dev) ((void)0)
 #endif
@@ -1066,6 +1118,7 @@ static bool iqs9151_emit_click(struct iqs9151_data *data,
 
     iqs9151_report_key_event(dev, button, true, true, K_FOREVER);
     iqs9151_report_key_event(dev, button, false, true, K_FOREVER);
+    IQS9151_HAPTIC(dev, IQS9151_HAPTIC_TAP);
     return true;
 }
 
@@ -1252,6 +1305,7 @@ static bool iqs9151_one_finger_update(struct iqs9151_data *data,
             if (iqs9151_emit_hold_press(data, dev, INPUT_BTN_0)) {
                 state->hold_sent = true;
                 state->tap_candidate = false;
+                IQS9151_HAPTIC(dev, IQS9151_HAPTIC_LONG_PRESS);
             }
         }
 #endif
@@ -1273,7 +1327,7 @@ static bool iqs9151_one_finger_update(struct iqs9151_data *data,
             if (second_tap_detected) {
                 iqs9151_release_hold(data, dev);
             } else {
-                iqs9151_drag_lock_arm(data);
+                iqs9151_drag_lock_arm(data, dev);
             }
 #else
             iqs9151_release_hold(data, dev);
@@ -1291,7 +1345,7 @@ static bool iqs9151_one_finger_update(struct iqs9151_data *data,
     if (frame->finger_count == 0U && state->hold_sent &&
         !state->tapdrag_second_touch) {
 #if IS_ENABLED(CONFIG_INPUT_IQS9151_DRAG_LOCK_ENABLE)
-        iqs9151_drag_lock_arm(data);
+        iqs9151_drag_lock_arm(data, dev);
 #else
         iqs9151_release_hold(data, dev);
 #endif
@@ -1326,6 +1380,9 @@ static bool iqs9151_one_finger_update(struct iqs9151_data *data,
             tap_detected = true;
             if (IS_ENABLED(CONFIG_INPUT_IQS9151_1F_PRESSHOLD_ENABLE)) {
                 tap_emitted = iqs9151_emit_hold_press(data, dev, INPUT_BTN_0);
+                if (tap_emitted) {
+                    IQS9151_HAPTIC(dev, IQS9151_HAPTIC_TAP);
+                }
             } else if (IS_ENABLED(CONFIG_INPUT_IQS9151_1F_TAP_ENABLE)) {
                 tap_emitted = iqs9151_emit_click(data, dev, INPUT_BTN_0);
             } else {
@@ -1485,6 +1542,7 @@ static void iqs9151_two_finger_update(struct iqs9151_data *data,
             if (iqs9151_emit_hold_press(data, dev, INPUT_BTN_1)) {
                 state->hold_sent = true;
                 state->tap_candidate = false;
+                IQS9151_HAPTIC(dev, IQS9151_HAPTIC_LONG_PRESS);
             }
         }
 #endif
@@ -1559,7 +1617,7 @@ static void iqs9151_two_finger_update(struct iqs9151_data *data,
             if (second_tap_detected) {
                 iqs9151_release_hold(data, dev);
             } else {
-                iqs9151_drag_lock_arm(data);
+                iqs9151_drag_lock_arm(data, dev);
             }
 #else
             iqs9151_release_hold(data, dev);
@@ -1577,7 +1635,7 @@ static void iqs9151_two_finger_update(struct iqs9151_data *data,
 #if IS_ENABLED(CONFIG_INPUT_IQS9151_LONG_PRESS_HOLD_ENABLE)
     if (state->hold_sent && !state->tapdrag_second_touch) {
 #if IS_ENABLED(CONFIG_INPUT_IQS9151_DRAG_LOCK_ENABLE)
-        iqs9151_drag_lock_arm(data);
+        iqs9151_drag_lock_arm(data, dev);
 #else
         iqs9151_release_hold(data, dev);
 #endif
@@ -1605,6 +1663,9 @@ static void iqs9151_two_finger_update(struct iqs9151_data *data,
         if (tap_detected) {
             if (IS_ENABLED(CONFIG_INPUT_IQS9151_2F_PRESSHOLD_ENABLE)) {
                 tap_emitted = iqs9151_emit_hold_press(data, dev, INPUT_BTN_1);
+                if (tap_emitted) {
+                    IQS9151_HAPTIC(dev, IQS9151_HAPTIC_TAP);
+                }
             } else if (IS_ENABLED(CONFIG_INPUT_IQS9151_2F_TAP_ENABLE)) {
                 tap_emitted = iqs9151_emit_click(data, dev, INPUT_BTN_1);
             } else {
@@ -1651,6 +1712,9 @@ static void iqs9151_two_finger_update(struct iqs9151_data *data,
     if (tap_detected) {
         if (IS_ENABLED(CONFIG_INPUT_IQS9151_2F_PRESSHOLD_ENABLE)) {
             tap_emitted = iqs9151_emit_hold_press(data, dev, INPUT_BTN_1);
+            if (tap_emitted) {
+                IQS9151_HAPTIC(dev, IQS9151_HAPTIC_TAP);
+            }
         } else if (IS_ENABLED(CONFIG_INPUT_IQS9151_2F_TAP_ENABLE)) {
             tap_emitted = iqs9151_emit_click(data, dev, INPUT_BTN_1);
         } else {
@@ -1806,6 +1870,7 @@ static bool iqs9151_three_finger_update(struct iqs9151_data *data,
             if (iqs9151_emit_hold_press(data, dev, INPUT_BTN_2)) {
                 data->three_hold_sent = true;
                 data->three_tap_candidate = false;
+                IQS9151_HAPTIC(dev, IQS9151_HAPTIC_LONG_PRESS);
             }
         }
 #endif
@@ -1849,7 +1914,7 @@ static bool iqs9151_three_finger_update(struct iqs9151_data *data,
             if (second_tap_detected) {
                 iqs9151_release_hold(data, dev);
             } else {
-                iqs9151_drag_lock_arm(data);
+                iqs9151_drag_lock_arm(data, dev);
             }
 #else
             iqs9151_release_hold(data, dev);
@@ -1867,7 +1932,7 @@ static bool iqs9151_three_finger_update(struct iqs9151_data *data,
 #if IS_ENABLED(CONFIG_INPUT_IQS9151_LONG_PRESS_HOLD_ENABLE)
     if (data->three_hold_sent && !data->three_tapdrag_second_touch) {
 #if IS_ENABLED(CONFIG_INPUT_IQS9151_DRAG_LOCK_ENABLE)
-        iqs9151_drag_lock_arm(data);
+        iqs9151_drag_lock_arm(data, dev);
 #else
         iqs9151_release_hold(data, dev);
 #endif
@@ -1899,6 +1964,9 @@ static bool iqs9151_three_finger_update(struct iqs9151_data *data,
         if (tap_detected) {
             if (IS_ENABLED(CONFIG_INPUT_IQS9151_3F_PRESSHOLD_ENABLE)) {
                 tap_emitted = iqs9151_emit_hold_press(data, dev, INPUT_BTN_2);
+                if (tap_emitted) {
+                    IQS9151_HAPTIC(dev, IQS9151_HAPTIC_TAP);
+                }
             } else if (IS_ENABLED(CONFIG_INPUT_IQS9151_3F_TAP_ENABLE)) {
                 tap_emitted = iqs9151_emit_click(data, dev, INPUT_BTN_2);
             } else {
@@ -1943,6 +2011,9 @@ static bool iqs9151_three_finger_update(struct iqs9151_data *data,
     if (tap_detected) {
         if (IS_ENABLED(CONFIG_INPUT_IQS9151_3F_PRESSHOLD_ENABLE)) {
             tap_emitted = iqs9151_emit_hold_press(data, dev, INPUT_BTN_2);
+            if (tap_emitted) {
+                IQS9151_HAPTIC(dev, IQS9151_HAPTIC_TAP);
+            }
         } else if (IS_ENABLED(CONFIG_INPUT_IQS9151_3F_TAP_ENABLE)) {
             tap_emitted = iqs9151_emit_click(data, dev, INPUT_BTN_2);
         } else {
@@ -3089,10 +3160,20 @@ void iqs9151_test_force_pinch_session(void *ctx, bool active) {
 }
 #endif
 
+#if IS_ENABLED(CONFIG_INPUT_IQS9151_HAPTIC_FEEDBACK_ENABLE)
+#define IQS9151_HAPTIC_DEV_FIELD(inst)                                                    \
+    .haptic_dev = COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, haptic_dev),                    \
+                              (DEVICE_DT_GET(DT_INST_PHANDLE(inst, haptic_dev))),         \
+                              (NULL)),
+#else
+#define IQS9151_HAPTIC_DEV_FIELD(inst)
+#endif
+
 #define IQS9151_INIT(inst)                                                \
     static const struct iqs9151_config iqs9151_config_##inst = {    \
         .i2c = I2C_DT_SPEC_INST_GET(inst),                                      \
         .irq_gpio = GPIO_DT_SPEC_INST_GET(inst, irq_gpios),                     \
+        IQS9151_HAPTIC_DEV_FIELD(inst)                                          \
   };                                                                          \
   static struct iqs9151_data iqs9151_data_##inst;                 \
   DEVICE_DT_INST_DEFINE(inst, iqs9151_init, NULL,                       \

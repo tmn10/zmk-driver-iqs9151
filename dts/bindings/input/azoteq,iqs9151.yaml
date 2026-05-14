@@ -10,3 +10,11 @@ properties:
     type: phandle-array
     required: true
     description: Interrupt GPIO for IQS9151 driver.
+
+  haptic-dev:
+    type: phandle
+    description: |
+      Optional DRV2605L haptic motor controller used for tactile feedback
+      on gesture events (tap confirmation, long-press hold engagement,
+      drag-lock arm/release). If omitted, haptic feedback is disabled at
+      runtime even when CONFIG_INPUT_IQS9151_HAPTIC_FEEDBACK_ENABLE=y.

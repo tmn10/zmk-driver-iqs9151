@@ -446,6 +446,54 @@ config INPUT_IQS9151_FINGER_COUNT_DEBOUNCE_FRAMES
       isolated single-frame flickers, 3+ adds more latency for stricter
       filtering. Each polling cycle is one frame.
 
+config INPUT_IQS9151_HAPTIC_FEEDBACK_ENABLE
+    bool "IQS9151 haptic feedback via DRV2605L"
+    default n
+    depends on DRV2605
+    help
+      Fire DRV2605L haptic effects on gesture events (tap confirmation,
+      long-press hold engagement, drag-lock arm/release). Requires both
+      this option and a haptic-dev phandle on the iqs9151 devicetree node
+      pointing at a DRV2605L instance. Defaults to n.
+
+if INPUT_IQS9151_HAPTIC_FEEDBACK_ENABLE
+
+config INPUT_IQS9151_HAPTIC_TAP_EFFECT
+    int "Effect ID for tap confirmation"
+    range 0 123
+    default 1
+    help
+      DRV2605L built-in effect ID (1-123) to play when a 1F/2F/3F tap
+      is confirmed. 0 disables this event. Default 1 (Strong Click 100%).
+      Recommended values: 1, 2, 3 (clicks), 7-9 (soft bumps).
+
+config INPUT_IQS9151_HAPTIC_LONG_PRESS_EFFECT
+    int "Effect ID for long-press hold engagement"
+    range 0 123
+    default 47
+    help
+      Effect ID to play when long-press hold engages. 0 disables.
+      Default 47 (Buzz 1 100%) gives a distinct buzz to confirm the hold
+      latched. Recommended: 47-52 (buzzes), 14-16 (sharp clicks).
+
+config INPUT_IQS9151_HAPTIC_DRAG_LOCK_ARM_EFFECT
+    int "Effect ID for drag-lock arm"
+    range 0 123
+    default 10
+    help
+      Effect ID to play when drag-lock arms (TapDrag/long-press lift
+      with drag-lock enabled). 0 disables. Default 10 (Double Click 100%).
+
+config INPUT_IQS9151_HAPTIC_DRAG_LOCK_RELEASE_EFFECT
+    int "Effect ID for drag-lock release"
+    range 0 123
+    default 7
+    help
+      Effect ID to play when drag-lock releases. 0 disables.
+      Default 7 (Soft Bump 100%).
+
+endif # INPUT_IQS9151_HAPTIC_FEEDBACK_ENABLE
+
 config INPUT_IQS9151_TEST
     bool "IQS9151 test hooks"
     depends on ZTEST
