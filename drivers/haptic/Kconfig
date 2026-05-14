@@ -1,0 +1,30 @@
+config DRV2605
+	bool "TI DRV2605L Haptic Motor Controller"
+	default n
+	depends on I2C
+	help
+	  Enable the TI DRV2605L haptic motor controller driver. Provides
+	  drv2605_play_effect()/drv2605_stop() API and consumes the
+	  "ti,drv2605" devicetree binding.
+
+if DRV2605
+
+config DRV2605_INIT_PRIORITY
+	int "DRV2605L driver init priority"
+	default 80
+	range 0 99
+	help
+	  POST_KERNEL initialization priority for DRV2605L. Must be greater
+	  than the I2C controller init priority so the bus is ready when the
+	  driver initializes.
+
+config DRV2605_AUTO_CALIBRATION
+	bool "Run LRA auto-calibration on init"
+	default n
+	help
+	  Run DRV2605L auto-calibration sequence at startup. Adds ~250 ms
+	  boot delay but adapts drive parameters to the actual LRA's
+	  resonance. Disabled by default; effect library tuned for typical
+	  175 Hz LRA works well without calibration.
+
+endif # DRV2605

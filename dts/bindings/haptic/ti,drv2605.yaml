@@ -1,0 +1,40 @@
+description: TI DRV2605L Haptic Motor Controller
+
+compatible: "ti,drv2605"
+
+include: i2c-device.yaml
+
+properties:
+  actuator-type:
+    type: string
+    default: "lra"
+    enum:
+      - "lra"
+      - "erm"
+    description: |
+      Actuator type. "lra" selects the internal LRA library and feedback
+      control mode (closed-loop). "erm" selects the ERM (eccentric rotating
+      mass) library.
+
+  rated-voltage-mv:
+    type: int
+    default: 2000
+    description: |
+      Rated voltage of the actuator in millivolts (RMS for LRA, DC for ERM).
+      Used to compute the RATED_VOLTAGE register value. Default 2000 mV
+      matches the Vybronics VG1040003D LRA.
+
+  overdrive-voltage-mv:
+    type: int
+    default: 2400
+    description: |
+      Overdrive (clamp) voltage in millivolts. Determines maximum drive
+      voltage during effect playback. Should be at most the actuator's
+      absolute maximum rating. Default 2400 mV.
+
+  library:
+    type: int
+    default: 6
+    description: |
+      Built-in effect library to select (register 0x21). For LRAs use 6.
+      For ERMs valid values are 1-5 selecting library A-E.

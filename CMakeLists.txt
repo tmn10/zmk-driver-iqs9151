@@ -1,3 +1,5 @@
+zephyr_include_directories(include)
+
 add_subdirectory(drivers)
 
 if(EXISTS "${APPLICATION_SOURCE_DIR}/include/drivers/behavior.h")
