@@ -1407,7 +1407,11 @@ static bool iqs9151_one_finger_update(struct iqs9151_data *data,
     }
 #endif
 
-    if (frame->finger_count == 0U && state->tap_candidate) {
+    if (frame->finger_count == 0U && state->tap_candidate
+#if IS_ENABLED(CONFIG_INPUT_IQS9151_DRAG_LOCK_ENABLE)
+        && data->drag_lock_button == 0U
+#endif
+    ) {
         const int64_t elapsed_ms = now_ms - state->down_ms;
 
         if (elapsed_ms <= ONE_FINGER_TAP_MAX_MS &&
