@@ -494,11 +494,11 @@ config INPUT_IQS9151_HAPTIC_DRAG_LOCK_RELEASE_EFFECT
 
 config INPUT_IQS9151_HAPTIC_DRAG_BUZZ_EFFECT
     int "Effect ID played repeatedly while a button is held (drag buzz)"
-    range 1 123
+    range 0 123
     default 9
     help
       Effect ID to play repeatedly while hold_button is active (drag/hold).
-      Default 9 (Soft Bump 30%).
+      Default 9 (Soft Bump 30%). Set to 0 to disable drag buzz entirely.
 
 config INPUT_IQS9151_HAPTIC_DRAG_BUZZ_INTERVAL_MS
     int "Interval between drag buzz pulses (ms)"

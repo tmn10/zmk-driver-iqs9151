@@ -322,6 +322,9 @@ static void iqs9151_haptic_drag_buzz_work_cb(struct k_work *work) {
 }
 
 static inline void iqs9151_haptic_drag_buzz_start(struct iqs9151_data *data) {
+    if (CONFIG_INPUT_IQS9151_HAPTIC_DRAG_BUZZ_EFFECT == 0) {
+        return;
+    }
     k_work_schedule(&data->haptic_drag_buzz_work,
                     K_MSEC(CONFIG_INPUT_IQS9151_HAPTIC_DRAG_BUZZ_INTERVAL_MS));
 }
