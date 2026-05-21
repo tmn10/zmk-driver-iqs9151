@@ -257,6 +257,9 @@ struct iqs9151_data {
     /* TODO: reserved for a future timeout-based auto-release feature. */
     int64_t drag_lock_started_ms;
 #endif
+#if IS_ENABLED(CONFIG_INPUT_IQS9151_HAPTIC_FEEDBACK_ENABLE)
+    struct k_work_delayable haptic_drag_buzz_work;
+#endif
 };
 
 #ifdef CONFIG_INPUT_IQS9151_TEST
@@ -303,8 +306,35 @@ static inline void iqs9151_haptic_fire(const struct device *dev,
 }
 
 #define IQS9151_HAPTIC(dev, event) iqs9151_haptic_fire((dev), (event))
+
+static void iqs9151_haptic_drag_buzz_work_cb(struct k_work *work) {
+    struct k_work_delayable *dwork = k_work_delayable_from_work(work);
+    struct iqs9151_data *data =
+        CONTAINER_OF(dwork, struct iqs9151_data, haptic_drag_buzz_work);
+    const struct iqs9151_config *cfg = data->dev->config;
+
+    if (cfg->haptic_dev != NULL && data->hold_button != 0U) {
+        (void)drv2605_play_effect(cfg->haptic_dev,
+                                  CONFIG_INPUT_IQS9151_HAPTIC_DRAG_BUZZ_EFFECT);
+        k_work_schedule(&data->haptic_drag_buzz_work,
+                        K_MSEC(CONFIG_INPUT_IQS9151_HAPTIC_DRAG_BUZZ_INTERVAL_MS));
+    }
+}
+
+static inline void iqs9151_haptic_drag_buzz_start(struct iqs9151_data *data) {
+    k_work_schedule(&data->haptic_drag_buzz_work,
+                    K_MSEC(CONFIG_INPUT_IQS9151_HAPTIC_DRAG_BUZZ_INTERVAL_MS));
+}
+
+static inline void iqs9151_haptic_drag_buzz_stop(struct iqs9151_data *data) {
+    k_work_cancel_delayable(&data->haptic_drag_buzz_work);
+}
+
 #else
 #define IQS9151_HAPTIC(dev, event) ((void)0)
+
+static inline void iqs9151_haptic_drag_buzz_start(struct iqs9151_data *data) { (void)data; }
+static inline void iqs9151_haptic_drag_buzz_stop(struct iqs9151_data *data) { (void)data; }
 #endif
 
 static int iqs9151_report_key_event(const struct device *dev, uint16_t code,
@@ -973,6 +1003,7 @@ static void iqs9151_inertia_cancel(struct iqs9151_inertia_state *state,
 }
 
 static void iqs9151_release_hold(struct iqs9151_data *data, const struct device *dev) {
+    iqs9151_haptic_drag_buzz_stop(data);
     if (data->hold_button == 0U) {
         return;
     }
@@ -984,6 +1015,7 @@ static void iqs9151_release_hold(struct iqs9151_data *data, const struct device 
 #if IS_ENABLED(CONFIG_INPUT_IQS9151_DRAG_LOCK_ENABLE)
 static void iqs9151_drag_lock_arm(struct iqs9151_data *data,
                                   const struct device *dev) {
+    iqs9151_haptic_drag_buzz_stop(data);
     if (data->hold_button == 0U) {
         return;
     }
@@ -1136,6 +1168,7 @@ static bool iqs9151_emit_hold_press(struct iqs9151_data *data,
 
     iqs9151_report_key_event(dev, button, true, true, K_FOREVER);
     data->hold_button = button;
+    iqs9151_haptic_drag_buzz_start(data);
     return true;
 }
 
@@ -3001,6 +3034,9 @@ static int iqs9151_init(const struct device *dev) {
     k_work_init_delayable(&data->three_finger_click_work, iqs9151_three_finger_click_work_cb);
     k_work_init_delayable(&data->inertia_scroll_work, iqs9151_inertia_scroll_work_cb);
     k_work_init_delayable(&data->inertia_cursor_work, iqs9151_inertia_cursor_work_cb);
+#if IS_ENABLED(CONFIG_INPUT_IQS9151_HAPTIC_FEEDBACK_ENABLE)
+    k_work_init_delayable(&data->haptic_drag_buzz_work, iqs9151_haptic_drag_buzz_work_cb);
+#endif
     iqs9151_inertia_state_reset(&data->inertia_scroll);
     iqs9151_inertia_state_reset(&data->inertia_cursor);
     iqs9151_ema_reset(&data->scroll_ema_x_fp, &data->scroll_ema_y_fp);
@@ -3063,6 +3099,9 @@ void iqs9151_test_context_init(void *ctx, const struct device *dev) {
     k_work_init_delayable(&data->three_finger_click_work, iqs9151_three_finger_click_work_cb);
     k_work_init_delayable(&data->inertia_scroll_work, iqs9151_inertia_scroll_work_cb);
     k_work_init_delayable(&data->inertia_cursor_work, iqs9151_inertia_cursor_work_cb);
+#if IS_ENABLED(CONFIG_INPUT_IQS9151_HAPTIC_FEEDBACK_ENABLE)
+    k_work_init_delayable(&data->haptic_drag_buzz_work, iqs9151_haptic_drag_buzz_work_cb);
+#endif
     iqs9151_inertia_state_reset(&data->inertia_scroll);
     iqs9151_inertia_state_reset(&data->inertia_cursor);
     iqs9151_ema_reset(&data->scroll_ema_x_fp, &data->scroll_ema_y_fp);
@@ -3095,6 +3134,9 @@ void iqs9151_test_cancel_pending_work(void *ctx) {
     (void)k_work_cancel_delayable(&data->three_finger_click_work);
     (void)k_work_cancel_delayable(&data->inertia_scroll_work);
     (void)k_work_cancel_delayable(&data->inertia_cursor_work);
+#if IS_ENABLED(CONFIG_INPUT_IQS9151_HAPTIC_FEEDBACK_ENABLE)
+    (void)k_work_cancel_delayable(&data->haptic_drag_buzz_work);
+#endif
     (void)k_work_cancel(&data->work);
 }
 
