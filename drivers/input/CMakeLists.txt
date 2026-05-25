@@ -1,3 +1,4 @@
 zephyr_library_amend()
 
 zephyr_library_sources_ifdef(CONFIG_INPUT_IQS9151 iqs9151.c)
+zephyr_library_sources_ifdef(CONFIG_INPUT_FSR_CLICK fsr_click.c)

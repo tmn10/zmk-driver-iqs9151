@@ -47,6 +47,18 @@ int drv2605_play_sequence(const struct device *dev,
  */
 int drv2605_stop(const struct device *dev);
 
+/**
+ * Check whether the DRV2605L is currently playing a waveform.
+ *
+ * Reads the GO register. Returns true while the GO bit is set (playback
+ * in progress). Safe to call from any context that can perform I2C.
+ *
+ * @param dev DRV2605L device pointer.
+ *
+ * @return true if playing, false otherwise (including on I2C error).
+ */
+bool drv2605_is_playing(const struct device *dev);
+
 #ifdef __cplusplus
 }
 #endif

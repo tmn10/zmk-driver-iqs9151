@@ -1,0 +1,52 @@
+description: |
+  ZMK FSR (Force Sensitive Resistor) click detector via ADS1015 I2C ADC.
+
+  Polls an ADC channel connected to an FSR voltage divider and emits
+  INPUT_BTN_0 press/release events into the ZMK input subsystem.
+
+  Typical wiring (right side, I2C bus shared with IQS9151 and DRV2605L):
+    FSR+ → 3V3
+    FSR- → ADS1015 A0 and 47kΩ pull-down to GND
+    ADS1015 SDA/SCL → XIAO D4/D5
+    ADS1015 ADDR → GND (I2C address 0x48)
+
+compatible: "zmk,fsr-click"
+
+properties:
+  io-channels:
+    type: phandle-array
+    required: true
+    description: |
+      ADC channel connected to the FSR voltage divider output.
+      Example: <&ads1015 0> for ADS1015 channel 0 (AIN0).
+
+  haptic-dev:
+    type: phandle
+    required: false
+    description: |
+      Optional DRV2605L haptic device phandle. When present and
+      CONFIG_INPUT_FSR_CLICK_HAPTIC_GATE is enabled, FSR readings are
+      suppressed while the DRV2605L is playing and for haptic-gate-ms
+      afterward, preventing vibration-induced false clicks.
+
+  threshold-delta:
+    type: int
+    default: 50
+    description: |
+      ADC raw counts above the calibrated resting baseline that trigger
+      a BTN_0 press. ADS1015 at gain 1x (FSR ±4.096V) gives ~2 mV/count,
+      so 50 counts ≈ 100 mV. Increase if idle noise causes false presses;
+      decrease if heavy presses are not detected.
+
+  poll-interval-ms:
+    type: int
+    default: 5
+    description: FSR polling interval in milliseconds.
+
+  haptic-gate-ms:
+    type: int
+    default: 200
+    description: |
+      Duration in milliseconds to suppress FSR readings after the
+      DRV2605L GO bit clears. Accounts for residual LRA vibration
+      after the waveform finishes. Only used when haptic-dev is set.

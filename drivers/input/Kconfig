@@ -517,3 +517,45 @@ config INPUT_IQS9151_TEST
       Expose IQS9151 internal test APIs and event hooks for ZTEST.
 
 endif
+
+config INPUT_FSR_CLICK
+    bool "FSR click detector via ADS1015 ADC"
+    default n
+    depends on ADC
+    depends on ADC_ADS1X1X
+    depends on INPUT
+    depends on DT_HAS_ZMK_FSR_CLICK_ENABLED
+    help
+      Enable FSR (Force Sensitive Resistor) click detection using an
+      ADS1015 I2C ADC. Emits INPUT_BTN_0 press/release events into the
+      ZMK input subsystem. Designed for use with the LaLaPadGen2 trackpad
+      lid-press hardware mod.
+
+if INPUT_FSR_CLICK
+
+config INPUT_FSR_CLICK_LOG_LEVEL
+    int "FSR click log level"
+    range 0 4
+    default INPUT_LOG_LEVEL if LOG
+    default 0
+    help
+      Log verbosity: 0=none, 1=err, 2=wrn, 3=inf, 4=dbg.
+
+config INPUT_FSR_CLICK_INIT_PRIORITY
+    int "FSR click driver init priority"
+    default 90
+    range 0 99
+    help
+      POST_KERNEL init priority. Must be higher than the ADC driver
+      (typically 80) so the ADS1015 is ready when fsr_click initializes.
+
+config INPUT_FSR_CLICK_HAPTIC_GATE
+    bool "Gate FSR readings after DRV2605L haptic fires"
+    default y
+    depends on DRV2605
+    help
+      Suppress FSR readings while the DRV2605L is playing and for
+      haptic-gate-ms afterward. Prevents LRA vibration from causing
+      false BTN_0 clicks. Requires a haptic-dev phandle in the DT node.
+
+endif # INPUT_FSR_CLICK

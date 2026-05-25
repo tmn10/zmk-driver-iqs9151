@@ -243,6 +243,17 @@ int drv2605_stop(const struct device *dev)
 	return ret;
 }
 
+bool drv2605_is_playing(const struct device *dev)
+{
+	uint8_t go = 0;
+
+	if (dev == NULL) {
+		return false;
+	}
+	(void)drv2605_read_reg(dev, DRV2605_REG_GO, &go);
+	return (go & DRV2605_GO_TRIGGER) != 0;
+}
+
 #if IS_ENABLED(CONFIG_DRV2605_AUTO_CALIBRATION)
 static int drv2605_run_autocal(const struct device *dev)
 {

@@ -19,6 +19,9 @@
 #if IS_ENABLED(CONFIG_INPUT_IQS9151_HAPTIC_FEEDBACK_ENABLE)
 #include <zmk/drivers/haptic/drv2605.h>
 #endif
+#if IS_ENABLED(CONFIG_INPUT_FSR_CLICK)
+#include <zmk/drivers/input/fsr_click.h>
+#endif
 
 #include <stdbool.h>
 #include <stdint.h>
@@ -98,6 +101,9 @@ struct iqs9151_config {
     struct gpio_dt_spec irq_gpio;
 #if IS_ENABLED(CONFIG_INPUT_IQS9151_HAPTIC_FEEDBACK_ENABLE)
     const struct device *haptic_dev;
+#endif
+#if IS_ENABLED(CONFIG_INPUT_FSR_CLICK)
+    const struct device *fsr_click_dev;
 #endif
 };
 struct iqs9151_frame {
@@ -2444,25 +2450,38 @@ static bool iqs9151_update_gesture_sessions(struct iqs9151_data *data,
     }
 
     if (frame->finger_count == 2U && data->one_finger.active) {
-        const int64_t elapsed_ms = k_uptime_get() - data->one_finger.down_ms;
+        if (IQS9151_FSR_DRAG_ACTIVE(dev)) {
+            /* FSR is physically held: suppress 2F transition so the second
+             * finger does not break the drag. 1F cursor state is preserved
+             * and resumes when the second finger lifts. */
+            data->two_finger_one_lead_valid = false;
+        } else {
+            const int64_t elapsed_ms = k_uptime_get() - data->one_finger.down_ms;
 
-        data->two_finger_one_lead_valid =
-            !data->one_finger.hold_sent &&
-            data->one_finger.tap_candidate &&
-            elapsed_ms <= TWO_FINGER_ONE_LEAD_MAX_MS &&
-            iqs9151_abs32(data->one_finger.dx) <= ONE_FINGER_TAP_MOVE &&
-            iqs9151_abs32(data->one_finger.dy) <= ONE_FINGER_TAP_MOVE;
-        if (data->one_finger.hold_sent) {
-            iqs9151_release_hold(data, dev);
-            released_from_hold = true;
+            data->two_finger_one_lead_valid =
+                !data->one_finger.hold_sent &&
+                data->one_finger.tap_candidate &&
+                elapsed_ms <= TWO_FINGER_ONE_LEAD_MAX_MS &&
+                iqs9151_abs32(data->one_finger.dx) <= ONE_FINGER_TAP_MOVE &&
+                iqs9151_abs32(data->one_finger.dy) <= ONE_FINGER_TAP_MOVE;
+            if (data->one_finger.hold_sent) {
+                iqs9151_release_hold(data, dev);
+                released_from_hold = true;
+            }
+            iqs9151_one_finger_reset(&data->one_finger);
         }
-        iqs9151_one_finger_reset(&data->one_finger);
     } else {
         data->two_finger_one_lead_valid = false;
     }
 
     if (frame->finger_count != 1U && data->one_finger.active) {
-        released_from_hold = iqs9151_one_finger_update(data, frame, prev_frame, dev);
+        /* Skip the 1F exit path when 2F appears during an FSR drag: the
+         * one_finger_update call would treat 2F as a lift and reset 1F state. */
+        if (frame->finger_count == 2U && IQS9151_FSR_DRAG_ACTIVE(dev)) {
+            /* suppressed */
+        } else {
+            released_from_hold = iqs9151_one_finger_update(data, frame, prev_frame, dev);
+        }
     }
     if (frame->finger_count != 2U && data->two_finger.active) {
         iqs9151_two_finger_update(data, frame, prev_frame, dev, two_result);
@@ -2481,7 +2500,9 @@ static bool iqs9151_update_gesture_sessions(struct iqs9151_data *data,
         break;
     case 2U:
         if (!(data->three_active && data->three_release_pending)) {
-            iqs9151_two_finger_update(data, frame, prev_frame, dev, two_result);
+            if (!(data->one_finger.active && IQS9151_FSR_DRAG_ACTIVE(dev))) {
+                iqs9151_two_finger_update(data, frame, prev_frame, dev, two_result);
+            }
         }
         break;
     case 3U:
@@ -3218,11 +3239,24 @@ void iqs9151_test_force_pinch_session(void *ctx, bool active) {
 #define IQS9151_HAPTIC_DEV_FIELD(inst)
 #endif
 
+#if IS_ENABLED(CONFIG_INPUT_FSR_CLICK)
+#define IQS9151_FSR_CLICK_DEV_FIELD(inst)                                                 \
+    .fsr_click_dev = COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, fsr_click_dev),             \
+                                 (DEVICE_DT_GET(DT_INST_PHANDLE(inst, fsr_click_dev))),  \
+                                 (NULL)),
+#define IQS9151_FSR_DRAG_ACTIVE(dev) \
+    fsr_click_is_pressed(((const struct iqs9151_config *)(dev)->config)->fsr_click_dev)
+#else
+#define IQS9151_FSR_CLICK_DEV_FIELD(inst)
+#define IQS9151_FSR_DRAG_ACTIVE(dev) false
+#endif
+
 #define IQS9151_INIT(inst)                                                \
     static const struct iqs9151_config iqs9151_config_##inst = {    \
         .i2c = I2C_DT_SPEC_INST_GET(inst),                                      \
         .irq_gpio = GPIO_DT_SPEC_INST_GET(inst, irq_gpios),                     \
         IQS9151_HAPTIC_DEV_FIELD(inst)                                          \
+        IQS9151_FSR_CLICK_DEV_FIELD(inst)                                       \
   };                                                                          \
   static struct iqs9151_data iqs9151_data_##inst;                 \
   DEVICE_DT_INST_DEFINE(inst, iqs9151_init, NULL,                       \

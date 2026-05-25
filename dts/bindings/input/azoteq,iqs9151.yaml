@@ -18,3 +18,12 @@ properties:
       on gesture events (tap confirmation, long-press hold engagement,
       drag-lock arm/release). If omitted, haptic feedback is disabled at
       runtime even when CONFIG_INPUT_IQS9151_HAPTIC_FEEDBACK_ENABLE=y.
+
+  fsr-click-dev:
+    type: phandle
+    description: |
+      Optional FSR click detector phandle (zmk,fsr-click compatible device).
+      When present and CONFIG_INPUT_FSR_CLICK is enabled, the 2F scroll/pinch
+      transition is suppressed while the FSR reports a press. This allows
+      dragging to continue uninterrupted when a second finger is placed on the
+      trackpad during an FSR-held drag.
