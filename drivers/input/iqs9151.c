@@ -106,6 +106,19 @@ struct iqs9151_config {
     const struct device *fsr_click_dev;
 #endif
 };
+
+/* FSR drag-suppression helpers — must appear before iqs9151_update_gesture_sessions(). */
+#if IS_ENABLED(CONFIG_INPUT_FSR_CLICK)
+#define IQS9151_FSR_CLICK_DEV_FIELD(inst)                                                 \
+    .fsr_click_dev = COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, fsr_click_dev),             \
+                                 (DEVICE_DT_GET(DT_INST_PHANDLE(inst, fsr_click_dev))),  \
+                                 (NULL)),
+#define IQS9151_FSR_DRAG_ACTIVE(dev) \
+    fsr_click_is_pressed(((const struct iqs9151_config *)(dev)->config)->fsr_click_dev)
+#else
+#define IQS9151_FSR_CLICK_DEV_FIELD(inst)
+#define IQS9151_FSR_DRAG_ACTIVE(dev) false
+#endif
 struct iqs9151_frame {
     int16_t rel_x;
     int16_t rel_y;
@@ -3237,18 +3250,6 @@ void iqs9151_test_force_pinch_session(void *ctx, bool active) {
                               (NULL)),
 #else
 #define IQS9151_HAPTIC_DEV_FIELD(inst)
-#endif
-
-#if IS_ENABLED(CONFIG_INPUT_FSR_CLICK)
-#define IQS9151_FSR_CLICK_DEV_FIELD(inst)                                                 \
-    .fsr_click_dev = COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, fsr_click_dev),             \
-                                 (DEVICE_DT_GET(DT_INST_PHANDLE(inst, fsr_click_dev))),  \
-                                 (NULL)),
-#define IQS9151_FSR_DRAG_ACTIVE(dev) \
-    fsr_click_is_pressed(((const struct iqs9151_config *)(dev)->config)->fsr_click_dev)
-#else
-#define IQS9151_FSR_CLICK_DEV_FIELD(inst)
-#define IQS9151_FSR_DRAG_ACTIVE(dev) false
 #endif
 
 #define IQS9151_INIT(inst)                                                \
